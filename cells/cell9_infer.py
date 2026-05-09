@@ -1,0 +1,117 @@
+"""Cell 9 – TTA + 5-Fold Ensemble Inference → submission.csv"""
+
+@torch.no_grad()
+def predict_tta(model: nn.Module, imgs: torch.Tensor,
+                cfg: "Config", n_tta: int = 2) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Horizontal-flip TTA: average sigmoid probs and severity over n_tta passes."""
+    core = model.module if hasattr(model, "module") else model
+    prob_sum = torch.zeros(imgs.size(0), 1, device=cfg.DEVICE)
+    sev_sum  = torch.zeros(imgs.size(0), 1, device=cfg.DEVICE)
+
+    for i in range(n_tta):
+        x = torch.flip(imgs, dims=[-1]) if i == 1 else imgs   # flip on last pass
+        logit, sev = core(x)
+        prob_sum += torch.sigmoid(logit)
+        sev_sum  += sev * cfg.SEVERITY_MAX
+
+    return prob_sum / n_tta, sev_sum / n_tta
+
+
+def load_fold_model(fold: int, cfg: "Config") -> nn.Module:
+    ckpt_path = cfg.CKPT_DIR / f"fold{fold}_best.pt"
+    _model = TBMTNet(cfg).to(cfg.DEVICE)
+    ckpt   = torch.load(ckpt_path, map_location=cfg.DEVICE, weights_only=False)
+    _model.load_state_dict(ckpt["model"])
+    _model.eval()
+    return _model
+
+
+def ensemble_predict(df: pd.DataFrame, cfg: "Config",
+                     n_tta: int = 2) -> pd.DataFrame:
+    """
+    Run all N_FOLDS models with TTA; average predictions.
+    Returns df with columns: image_path, tb_prob, timika_score
+    """
+    ds     = TBXDataset(df, cfg, train=False)
+    loader = DataLoader(ds, batch_size=cfg.BATCH_SIZE, shuffle=False,
+                        num_workers=cfg.NUM_WORKERS, pin_memory=True)
+
+    fold_probs = []
+    fold_sevs  = []
+
+    for fold in range(cfg.N_FOLDS):
+        ckpt = cfg.CKPT_DIR / f"fold{fold}_best.pt"
+        if not ckpt.exists():
+            print(f"  [WARN] Fold {fold} checkpoint not found — skipping")
+            continue
+
+        print(f"  Running fold {fold+1}/{cfg.N_FOLDS} …", end=" ", flush=True)
+        _model = load_fold_model(fold, cfg)
+
+        probs_list, sevs_list = [], []
+        for batch in loader:
+            imgs = batch["image"].to(cfg.DEVICE)
+            if cfg.USE_AMP:
+                with autocast("cuda", dtype=torch.float16):
+                    prob, sev = predict_tta(_model, imgs, cfg, n_tta)
+            else:
+                prob, sev = predict_tta(_model, imgs, cfg, n_tta)
+            probs_list.append(prob.cpu())
+            sevs_list.append(sev.cpu())
+
+        fold_probs.append(torch.cat(probs_list).numpy().ravel())
+        fold_sevs.append(torch.cat(sevs_list).numpy().ravel())
+        print("done")
+
+    if not fold_probs:
+        raise RuntimeError("No fold checkpoints found.")
+
+    # Mean ensemble
+    ens_probs = np.stack(fold_probs, axis=0).mean(axis=0)
+    ens_sevs  = np.stack(fold_sevs,  axis=0).mean(axis=0)
+
+    result_df = df[["image_path", "patient_id", "tb_label"]].copy()
+    result_df["tb_prob"]      = ens_probs
+    result_df["tb_pred"]      = (ens_probs >= 0.5).astype(int)
+    result_df["timika_score"] = ens_sevs.clip(0, 140)
+    return result_df
+
+
+def save_submission(result_df: pd.DataFrame, cfg: "Config") -> None:
+    sub = result_df[["image_path", "tb_prob", "timika_score"]].copy()
+    sub["image_id"] = sub["image_path"].apply(lambda p: Path(p).stem)
+    sub = sub[["image_id", "tb_prob", "timika_score"]]
+    sub.to_csv(cfg.BASE / "submission.csv", index=False)
+    print(f"submission.csv saved → {cfg.BASE / 'submission.csv'}")
+    print(sub.head(10))
+
+
+def print_summary(result_df: pd.DataFrame) -> None:
+    pos = (result_df["tb_pred"] == 1).sum()
+    neg = (result_df["tb_pred"] == 0).sum()
+    print("\n" + "="*50)
+    print("  ENSEMBLE INFERENCE SUMMARY")
+    print("="*50)
+    print(f"  Total images    : {len(result_df)}")
+    print(f"  Predicted TB+   : {pos}  ({100*pos/len(result_df):.1f}%)")
+    print(f"  Predicted TB-   : {neg}  ({100*neg/len(result_df):.1f}%)")
+    if result_df["timika_score"].notna().any():
+        s = result_df.loc[result_df["tb_pred"]==1, "timika_score"]
+        print(f"  Timika (TB+)    : mean={s.mean():.1f}  "
+              f"median={s.median():.1f}  "
+              f"range=[{s.min():.1f}, {s.max():.1f}]")
+
+    # GradCAM visualisation on top-5 uncertain cases
+    result_df["uncertainty"] = (result_df["tb_prob"] - 0.5).abs()
+    uncertain_idx = result_df["uncertainty"].nsmallest(5).index.tolist()
+    print(f"\n  Top-5 most uncertain cases (prob closest to 0.5):")
+    print(result_df.loc[uncertain_idx,
+                        ["image_id" if "image_id" in result_df.columns
+                         else "image_path", "tb_prob", "timika_score"]].to_string())
+
+
+# ── Run inference on full dataset ─────────────────────────────────────
+print("Running 5-fold TTA ensemble inference …")
+result_df = ensemble_predict(labels_df, CFG, n_tta=2)
+print_summary(result_df)
+save_submission(result_df, CFG)

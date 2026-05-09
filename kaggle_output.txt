@@ -1,0 +1,58 @@
+=======================================================
+  OOF Classification Results
+=======================================================
+  AUROC          : 0.9804  (95% CI [0.9773, 0.9832])
+  Partial AUROC  : 0.7531  (spec >= 0.70 region)
+  Threshold (J)  : 0.1772
+  Sensitivity    : 0.9665
+  Specificity    : 0.9262
+  F1             : 0.7603
+  Confusion Mat  :
+    TN=7552 FP=602
+    FN=35 TP=1010
+
+  OOF Severity Results
+=======================================================
+  MAE            : 11.87  (target < 15)
+  RMSE           : 17.54
+  Pearson r      : 0.6851  (target > 0.75)
+  Spearman rho   : 0.7394
+  N severity cases: 1045
+
+Plot saved → /kaggle/working/oof_evaluation.png
+
+
+
+
+
+Running 5-fold TTA ensemble inference …
+  Running fold 1/2 … done
+  Running fold 2/2 … done
+
+==================================================
+  ENSEMBLE INFERENCE SUMMARY
+==================================================
+  Total images    : 9199
+  Predicted TB+   : 1416  (15.4%)
+  Predicted TB-   : 7783  (84.6%)
+  Timika (TB+)    : mean=20.2  median=14.7  range=[4.6, 77.4]
+
+  Top-5 most uncertain cases (prob closest to 0.5):
+                                                                                           image_path   tb_prob  timika_score
+113   /kaggle/input/datasets/raddar/tuberculosis-chest-xrays-shenzhen/images/images/CHNCXR_0114_0.png  0.500397      5.456543
+4647           /kaggle/input/datasets/vbookshelf/tbx11k-simplified/tbx11k-simplified/images/s1409.png  0.500702     39.050781
+5     /kaggle/input/datasets/raddar/tuberculosis-chest-xrays-shenzhen/images/images/CHNCXR_0006_0.png  0.500793      5.860352
+8180           /kaggle/input/datasets/vbookshelf/tbx11k-simplified/tbx11k-simplified/images/s3605.png  0.501274     30.214844
+8991          /kaggle/input/datasets/vbookshelf/tbx11k-simplified/tbx11k-simplified/images/tb1181.png  0.498703     14.195312
+submission.csv saved → /kaggle/working/submission.csv
+        image_id   tb_prob  timika_score
+0  CHNCXR_0001_0  0.312805      7.146484
+1  CHNCXR_0002_0  0.673218      6.470703
+2  CHNCXR_0003_0  0.798706      5.187500
+3  CHNCXR_0004_0  0.556885      5.423828
+4  CHNCXR_0005_0  0.682556      5.190918
+5  CHNCXR_0006_0  0.500793      5.860352
+6  CHNCXR_0007_0  0.563110      6.180664
+7  CHNCXR_0008_0  0.030598     16.396484
+8  CHNCXR_0009_0  0.954468     10.955078
+9  CHNCXR_0010_0  0.181793      8.706055
