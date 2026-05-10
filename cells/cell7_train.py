@@ -1,11 +1,61 @@
 """Cell 7 – 3-Stage Progressive Training with 5-Fold Cross-Validation."""
 
+
+# ── Layer-wise LR decay for Inception-v3 backbone ────────────────────
+def _layerwise_backbone_params(backbone: nn.Module,
+                                base_lr: float,
+                                decay: float = 0.8) -> list:
+    """Return AdamW-style param-group dicts with depth-aware LR scaling.
+
+    Inception-v3 stage ordering (shallow → deep):
+      Stage 0 (earliest) : Conv2d_1a … Conv2d_4a  →  LR × decay³  (≈ 0.51×)
+      Stage 1 (mid)      : Mixed_5b … Mixed_6b    →  LR × decay²  (≈ 0.64×)
+      Stage 2 (late-mid) : Mixed_6c … Mixed_6e    →  LR × decay¹  (≈ 0.80×)
+      Stage 3 (deepest)  : Mixed_7a … Mixed_7c    →  LR × decay⁰  (= 1.00×)
+
+    Any unmatched parameters (e.g. timm feature_info wrappers) fall back
+    to base_lr so nothing is silently excluded from training.
+    """
+    stage_prefixes = [
+        # stage 0 – earliest, most generic features
+        ["Conv2d_1a_3x3", "Conv2d_2a_3x3", "Conv2d_2b_3x3",
+         "Conv2d_3b_1x1", "Conv2d_4a_3x3"],
+        # stage 1
+        ["Mixed_5b", "Mixed_5c", "Mixed_5d", "Mixed_6a", "Mixed_6b"],
+        # stage 2
+        ["Mixed_6c", "Mixed_6d", "Mixed_6e"],
+        # stage 3 – deepest / most task-specific
+        ["Mixed_7a", "Mixed_7b", "Mixed_7c"],
+    ]
+    n_stages   = len(stage_prefixes)
+    assigned   = set()
+    param_groups = []
+
+    for stage_idx, prefixes in enumerate(stage_prefixes):
+        lr_scale    = decay ** (n_stages - 1 - stage_idx)   # deeper → higher LR
+        stage_params = []
+        for name, param in backbone.named_parameters():
+            if name not in assigned and any(name.startswith(pf) for pf in prefixes):
+                stage_params.append(param)
+                assigned.add(name)
+        if stage_params:
+            param_groups.append({"params": stage_params, "lr": base_lr * lr_scale})
+
+    # Safety net: any unmatched params get base_lr
+    remaining = [p for n, p in backbone.named_parameters() if n not in assigned]
+    if remaining:
+        param_groups.append({"params": remaining, "lr": base_lr})
+
+    return param_groups
+
+
 def make_optimizer(model: nn.Module, cfg: "Config",
                    stage: int, mtl_loss: nn.Module) -> torch.optim.Optimizer:
     core = model.module if hasattr(model, "module") else model
     if stage == 1:
         params = [
-            {"params": core.backbone.parameters(),  "lr": cfg.S1_LR},
+            # Backbone: layer-wise decay — early layers learn slower
+            *_layerwise_backbone_params(core.backbone, cfg.S1_LR),
             {"params": core.eca.parameters(),        "lr": cfg.S1_LR},
             {"params": core.bridge.parameters(),     "lr": cfg.S1_LR},
             {"params": core.transformer.parameters(),"lr": cfg.S1_LR},
@@ -17,7 +67,8 @@ def make_optimizer(model: nn.Module, cfg: "Config",
         ]
     elif stage == 2:
         params = [
-            {"params": core.backbone.parameters(),   "lr": cfg.S2_LR},
+            # Backbone: layer-wise decay — early layers learn slower
+            *_layerwise_backbone_params(core.backbone, cfg.S2_LR),
             {"params": core.eca.parameters(),         "lr": cfg.S2_LR},
             {"params": core.bridge.parameters(),      "lr": cfg.S2_LR},
             {"params": core.transformer.parameters(), "lr": cfg.S2_LR},
@@ -333,6 +384,36 @@ def run_fold(fold: int, df: pd.DataFrame,
 
     torch.optim.swa_utils.update_bn(ImageOnlyLoader(train_loader), swa_model,
                                     device=cfg.DEVICE)
+
+    # ── Fix: evaluate the SWA model and save if it beats current best ─
+    # Previously the SWA model's updated weights + BN stats were computed
+    # but then discarded — the fold best was always the last non-SWA epoch.
+    # SWA averaging is most effective when we actually keep the averaged model.
+    print("  Evaluating SWA model on validation set …")
+    swa_core = swa_model.module if hasattr(swa_model, "module") else swa_model
+    swa_core.eval()
+
+    # Temporarily patch predict path: swa_model wraps the original module;
+    # validate() calls model(imgs) which triggers AveragedModel.__call__ → OK.
+    swa_val_loss, swa_auroc, swa_mae = validate(swa_model, val_loader, _loss, cfg)
+    print(f"  SWA val:  loss={swa_val_loss:.4f}  AUROC={swa_auroc:.4f}  MAE={swa_mae:.1f}")
+
+    if swa_auroc > best_auroc:
+        # Extract the underlying averaged parameters (module inside AveragedModel)
+        inner = swa_model.module if hasattr(swa_model, "module") else swa_model
+        torch.save({
+            "fold":   fold,
+            "epoch":  "swa",
+            "auroc":  swa_auroc,
+            "mae":    swa_mae,
+            "model":  inner.state_dict(),
+            "loss":   _loss.state_dict(),
+        }, ckpt_path)
+        best_auroc = swa_auroc
+        print(f"    ✓ SWA checkpoint saved as fold best  (AUROC {swa_auroc:.4f})")
+    else:
+        print(f"    ↳ SWA AUROC ({swa_auroc:.4f}) did not beat current best "
+              f"({best_auroc:.4f}) — keeping Stage-3 checkpoint.")
 
     # ── Fold complete – remove rolling resume file ────────────────────
     resume_p = cfg.CKPT_DIR / f"fold{fold}_resume.pt"

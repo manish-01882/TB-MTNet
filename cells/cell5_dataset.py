@@ -39,13 +39,16 @@ class TBXDataset(Dataset):
         return len(self.df)
 
     def _load_image(self, path: str) -> np.ndarray:
-        """Load grayscale CXR → CLAHE → 3-channel uint8 array."""
+        """Load grayscale CXR → per-image min-max stretch → 3-channel uint8 array."""
         img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             img = np.zeros((self.cfg.IMAGE_SIZE, self.cfg.IMAGE_SIZE), dtype=np.uint8)
-        # Per-image intensity normalisation
-        img = img.astype(np.float32) / 255.0
-        img = (img * 255).clip(0, 255).astype(np.uint8)
+        # Per-image min-max normalisation: stretches each CXR to fill the full
+        # [0, 255] range regardless of scanner brightness/contrast offset.
+        # The previous code (÷255 then ×255) was a mathematical no-op.
+        img_f = img.astype(np.float32)
+        lo, hi = img_f.min(), img_f.max()
+        img = ((img_f - lo) / (hi - lo + 1e-6) * 255.0).clip(0, 255).astype(np.uint8)
         img = np.stack([img, img, img], axis=-1)
         return img                              # (H, W, 3) uint8
 

@@ -51,12 +51,15 @@ def _load_via_annotations(json_path: Path) -> dict:
     return fname_map
 
 
-def _alp_from_via_regions(regions: list, lung_mask) -> tuple:
+def _alp_from_via_regions(regions: list, lung_mask, orig_shape: tuple) -> tuple:
     """Compute ALP and cavity flag from VIA region list for one image.
 
     Args:
-        regions: list of VIA region dicts (each with shape_attributes & region_attributes)
-        lung_mask: np.ndarray H×W grayscale lung segmentation mask
+        regions:    list of VIA region dicts (each with shape_attributes & region_attributes)
+        lung_mask:  np.ndarray H×W grayscale lung segmentation mask
+        orig_shape: (h_orig, w_orig) of the *original* CXR image the VIA annotations
+                    were drawn on. Used to correctly scale polygon coordinates to
+                    lung_mask dimensions. Must NOT be the polygon bounding box.
 
     Returns:
         (alp_percent, has_cavity): ALP in [0, 100] or -1 on error; cavity bool
@@ -64,6 +67,14 @@ def _alp_from_via_regions(regions: list, lung_mask) -> tuple:
     h, w = lung_mask.shape[:2]
     lesion_mask = np.zeros((h, w), dtype=np.uint8)
     has_cavity = False
+
+    # Fix: use real original image dimensions for scaling instead of the
+    # polygon bounding box. The old code used max(points_x) as the "original
+    # width", which is wrong whenever the polygon doesn't reach the image
+    # border — causing all coordinates to be compressed toward the origin.
+    h_orig, w_orig = orig_shape
+    sx = w / max(w_orig, 1)
+    sy = h / max(h_orig, 1)
 
     for region in regions:
         shape = region.get("shape_attributes", {})
@@ -84,14 +95,6 @@ def _alp_from_via_regions(regions: list, lung_mask) -> tuple:
             ys = shape.get("all_points_y", [])
             if len(xs) < 3 or len(ys) < 3:
                 continue
-
-            # Scale coordinates to lung_mask dimensions
-            # VIA annotations are in original image pixel space;
-            # lung_mask may be a resized version → scale proportionally.
-            # We use the bounding box of points to detect if scaling is needed.
-            max_x, max_y = max(xs), max(ys)
-            sx = w / max(max_x + 1, w)   # ≈1.0 if already at mask size
-            sy = h / max(max_y + 1, h)
 
             pts = np.array(
                 [[int(x * sx), int(y * sy)] for x, y in zip(xs, ys)],
@@ -177,7 +180,12 @@ def compute_tier1(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
             skipped_no_mask += 1
             continue
 
-        alp, cavity = _alp_from_via_regions(regions, lung_mask)
+        # Read original image dimensions for correct polygon coordinate scaling.
+        # Fall back to lung_mask shape only if the image can't be read.
+        orig_img = cv2.imread(str(row["image_path"]), cv2.IMREAD_GRAYSCALE)
+        orig_shape = orig_img.shape[:2] if orig_img is not None else lung_mask.shape[:2]
+
+        alp, cavity = _alp_from_via_regions(regions, lung_mask, orig_shape=orig_shape)
         if alp < 0:
             continue
 
@@ -270,13 +278,13 @@ def compute_tier2(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
             lung_mask = None
 
         if lung_mask is None:
-            # Fallback: image-relative ALP (lung ≈ 60% of 512×512 image)
-            h, w = 512, 512
-            std_lung_area = int(h * w * 0.60)
-            bbox_area = sum(
-                int(b["width"]) * int(b["height"]) for b in boxes
-            )
-            raw_alp = min(float(bbox_area) / float(std_lung_area) * 100.0, 100.0)
+            # Fix: skip images without a lung mask entirely rather than using
+            # a flat 60%-of-image fallback.  That heuristic introduced a
+            # systematic downward ALP bias (compressed/pathological lungs may
+            # occupy far less than 60%) and corrupted the regression targets.
+            # These cases stay has_severity=0 and are handled by Tier-3 if
+            # they have a predicted mask, or excluded from severity training.
+            continue
 
         df.at[idx, "_raw_alp"] = raw_alp
         if row["has_severity"]:
@@ -379,7 +387,15 @@ def compute_tier3(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
         return df
 
     print(f"[Tier-3] Pseudo-labelling {len(needs)} unannotated TB+ cases …")
-    teacher = _train_teacher(df, cfg)
+
+    # ── Fix: break the circular pseudo-label loop ─────────────────────
+    # Train the teacher ONLY on images it will NOT pseudo-label.
+    # Tier-3 candidates (needs) are excluded so the teacher never memorises
+    # the very images it will generate labels for.
+    teacher_df = df.drop(index=needs).reset_index(drop=True)
+    print(f"  Teacher will train on {len(teacher_df)} images "
+          f"(excluded {len(needs)} Tier-3 candidates from training).")
+    teacher = _train_teacher(teacher_df, cfg)
     teacher.eval()
 
     # GradCAM++ targets the last denseblock
@@ -404,9 +420,13 @@ def compute_tier3(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
         aug  = tfm_val(image=img3)
         inp  = aug["image"].unsqueeze(0).to(cfg.DEVICE)
 
+        # Fix: use targets=None so GradCAM++ activates gradients toward the
+        # model's sole output (TB probability) in the *positive* direction.
+        # ClassifierOutputTarget(0) was wrong — it targeted class index 0 which,
+        # for a 1-output sigmoid, pushes gradients toward "not TB".
         grayscale_cam = cam(
             input_tensor=inp,
-            targets=[ClassifierOutputTarget(0)]
+            targets=None
         )[0]  # (224, 224)
 
         # Resize back to lung-mask size

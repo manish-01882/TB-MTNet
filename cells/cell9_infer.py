@@ -1,20 +1,43 @@
 """Cell 9 – TTA + 5-Fold Ensemble Inference → submission.csv"""
 
+import torchvision.transforms.functional as TF   # for rotation TTA
+
+# ── Four deterministic TTA augmentations ─────────────────────────────
+# All keep spatial size at IMAGE_SIZE×IMAGE_SIZE so the fixed positional
+# embedding (196 patch tokens) is never invalidated.
+#   1) original
+#   2) horizontal flip   – most useful for CXR (L/R mirror is clinically valid)
+#   3) +5° rotation      – mild geometric jitter
+#   4) −5° rotation
+_TTA_FNS = [
+    lambda x: x,
+    lambda x: torch.flip(x, dims=[-1]),
+    lambda x: TF.rotate(x, angle=5,  fill=0),
+    lambda x: TF.rotate(x, angle=-5, fill=0),
+]
+
+
 @torch.no_grad()
 def predict_tta(model: nn.Module, imgs: torch.Tensor,
-                cfg: "Config", n_tta: int = 2) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Horizontal-flip TTA: average sigmoid probs and severity over n_tta passes."""
+                cfg: "Config", n_tta: int = 4) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Multi-augmentation TTA: original, h-flip, ±5° rotation (4 passes by default).
+
+    All augmentations keep spatial dimensions at IMAGE_SIZE so the transformer's
+    fixed pos-embed (196 patch tokens) stays valid throughout.
+    Set n_tta=2 to fall back to original + h-flip only.
+    """
     core = model.module if hasattr(model, "module") else model
     prob_sum = torch.zeros(imgs.size(0), 1, device=cfg.DEVICE)
     sev_sum  = torch.zeros(imgs.size(0), 1, device=cfg.DEVICE)
 
-    for i in range(n_tta):
-        x = torch.flip(imgs, dims=[-1]) if i == 1 else imgs   # flip on last pass
+    augs = _TTA_FNS[:n_tta]
+    for aug_fn in augs:
+        x = aug_fn(imgs.clone())
         logit, sev = core(x)
         prob_sum += torch.sigmoid(logit)
         sev_sum  += sev * cfg.SEVERITY_MAX
 
-    return prob_sum / n_tta, sev_sum / n_tta
+    return prob_sum / len(augs), sev_sum / len(augs)
 
 
 def load_fold_model(fold: int, cfg: "Config") -> nn.Module:
