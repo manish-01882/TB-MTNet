@@ -20,6 +20,11 @@ class LungMaskDataset(Dataset):
         r   = self.rows.iloc[idx]
         img = cv2.imread(r["image_path"], cv2.IMREAD_GRAYSCALE)
         msk = cv2.imread(r["lung_mask_path"], cv2.IMREAD_GRAYSCALE)
+        # Guard against corrupted or missing files so the DataLoader never crashes
+        if img is None:
+            img = np.zeros((self.size, self.size), dtype=np.uint8)
+        if msk is None:
+            msk = np.zeros((self.size, self.size), dtype=np.uint8)
         img = np.stack([img, img, img], axis=-1)          # H×W×3
         msk = (msk > 127).astype(np.float32)
         aug  = self.tfm(image=img, mask=msk)
@@ -63,14 +68,15 @@ def train_lung_segmenter(df: pd.DataFrame, cfg: "Config") -> nn.Module:
     loss_fn = smp.losses.DiceLoss(mode="binary")
     scaler  = GradScaler("cuda") if cfg.USE_AMP else None
 
-    best_loss = float("inf")
+    best_loss  = float("inf")
+    amp_dtype  = getattr(torch, cfg.AMP_DTYPE, torch.float16)  # honour cfg (bfloat16 or float16)
     for epoch in range(cfg.SEG_EPOCHS):
         model.train(); epoch_loss = 0.0
         for imgs, msks in loader:
             imgs, msks = imgs.to(cfg.DEVICE), msks.to(cfg.DEVICE)
             opt.zero_grad(set_to_none=True)
             if cfg.USE_AMP:
-                with autocast("cuda"):
+                with autocast("cuda", dtype=amp_dtype):
                     pred = model(imgs)
                     loss = loss_fn(pred, msks)
                 scaler.scale(loss).backward()
@@ -83,7 +89,7 @@ def train_lung_segmenter(df: pd.DataFrame, cfg: "Config") -> nn.Module:
                 loss.backward(); opt.step()
             epoch_loss += loss.item()
         epoch_loss /= len(loader)
-        if epoch % 5 == 0:
+        if epoch % 5 == 0 or epoch == cfg.SEG_EPOCHS - 1:   # always print the last epoch
             print(f"  Seg epoch {epoch+1:02d}/{cfg.SEG_EPOCHS}  loss={epoch_loss:.4f}")
         if epoch_loss < best_loss:
             best_loss = epoch_loss

@@ -8,6 +8,7 @@ Tier 2 – TBX11K COCO bounding boxes  →  pseudo-ALP + linear calibration
 Tier 3 – Grad-CAM++ pseudo-labels for remaining unannotated TB+ cases
 """
 
+import ast
 import json as _json
 from pathlib import Path
 
@@ -211,10 +212,7 @@ def compute_tier2(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
     Multiple bbox rows for the same image are unioned into one lesion mask.
     ALP = (lesion ∩ lung) / lung  *  100  → Timika = ALP (no cavity term for Tier-2).
     """
-    import ast
-
     # Resolve TBX11K root (same logic as parse_tbx11k)
-    from pathlib import Path as _Path
     tbx_dir = _resolve_tbx11k_dir(cfg)
     csv_path = tbx_dir / "data.csv"
 
@@ -320,16 +318,21 @@ def compute_tier2(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
 
 # ── Tier 3: Grad-CAM++ pseudo-labels ─────────────────────────────────
 from pytorch_grad_cam import GradCAMPlusPlus
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+# Note: targets=None is used below (not ClassifierOutputTarget) — correct for
+# a single-output sigmoid binary model where we want TB-positive gradients.
 
 
 def _train_teacher(df: pd.DataFrame, cfg: "Config") -> nn.Module:
     """Train a lightweight DenseNet-121 teacher on Tier-1+Tier-2 labelled data."""
-    ckpt = cfg.CKPT_DIR / "teacher_densenet.pt"
+    # Cache key includes df length so a stale teacher (trained on the full dataset
+    # before the circular-loop fix) is never accidentally reloaded.
+    ckpt = cfg.CKPT_DIR / f"teacher_densenet_{len(df)}imgs.pt"
     model = timm.create_model("densenet121", pretrained=True, num_classes=1)
     model = model.to(cfg.DEVICE)
     if ckpt.exists():
-        model.load_state_dict(torch.load(ckpt, map_location=cfg.DEVICE, weights_only=False))
+        state_dict = torch.load(ckpt, map_location=cfg.DEVICE, weights_only=False)
+        state_dict = {k[7:] if k.startswith("module.") else k: v for k, v in state_dict.items()}
+        model.load_state_dict(state_dict)
         model.eval(); return model
 
     # Simple dataset of all images with known tb_label
@@ -371,7 +374,8 @@ def _train_teacher(df: pd.DataFrame, cfg: "Config") -> nn.Module:
             total += loss.item()
         if ep % 3 == 0:
             print(f"  Teacher epoch {ep+1}/10  loss={total/len(loader):.4f}")
-    torch.save(model.state_dict(), ckpt)
+    state_to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+    torch.save(state_to_save, ckpt)
     model.eval(); return model
 
 
@@ -398,8 +402,10 @@ def compute_tier3(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
     teacher = _train_teacher(teacher_df, cfg)
     teacher.eval()
 
-    # GradCAM++ targets the last denseblock
-    target_layer = [teacher.features.denseblock4.denselayer16.conv2]
+    # GradCAM++ targets the last denseblock.
+    # Unwrap DataParallel so .features is accessible on the underlying module.
+    _teacher_core = teacher.module if isinstance(teacher, nn.DataParallel) else teacher
+    target_layer = [_teacher_core.features.denseblock4.denselayer16.conv2]
     cam = GradCAMPlusPlus(model=teacher, target_layers=target_layer)
 
     tfm_val = A.Compose([
@@ -456,7 +462,7 @@ def compute_tier3(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
         df.at[idx, "has_severity"] = 1
         updated += 1
 
-    cam.__del__()   # release hooks
+    cam.__exit__(None, None, None)   # release forward/backward hooks properly
     print(f"[Tier-3] GradCAM++: {updated} cases labelled")
     return df
 
@@ -489,3 +495,4 @@ if not (labels_df["has_severity"] == 1).any():
 else:
     print("Severity labels already present — skipping generation.")
     labels_df = add_severity_quartile(labels_df)
+    labels_df.to_csv(CFG.LABELS_CSV, index=False)  # persist strat_key so next run loads it

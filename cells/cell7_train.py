@@ -1,5 +1,6 @@
 """Cell 7 – 3-Stage Progressive Training with 5-Fold Cross-Validation."""
 
+from torch.optim.swa_utils import AveragedModel, SWALR
 
 # ── Layer-wise LR decay for Inception-v3 backbone ────────────────────
 def _layerwise_backbone_params(backbone: nn.Module,
@@ -80,7 +81,7 @@ def make_optimizer(model: nn.Module, cfg: "Config",
             {"params": mtl_loss.parameters(),         "lr": cfg.S2_LR},
         ]
     else:  # stage 3
-        params = model.parameters()
+        params = core.parameters()   # use core to avoid DataParallel duplicate-param warnings
         return torch.optim.AdamW(params, lr=cfg.S3_LR,
                                  weight_decay=cfg.WEIGHT_DECAY)
     return torch.optim.AdamW(params, weight_decay=cfg.WEIGHT_DECAY)

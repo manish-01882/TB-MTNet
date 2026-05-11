@@ -75,7 +75,7 @@ def ensemble_predict(df: pd.DataFrame, cfg: "Config",
         for batch in loader:
             imgs = batch["image"].to(cfg.DEVICE)
             if cfg.USE_AMP:
-                with autocast("cuda", dtype=torch.float16):
+                with autocast("cuda", dtype=getattr(torch, cfg.AMP_DTYPE)):
                     prob, sev = predict_tta(_model, imgs, cfg, n_tta)
             else:
                 prob, sev = predict_tta(_model, imgs, cfg, n_tta)
@@ -135,6 +135,6 @@ def print_summary(result_df: pd.DataFrame) -> None:
 
 # ── Run inference on full dataset ─────────────────────────────────────
 print("Running 5-fold TTA ensemble inference …")
-result_df = ensemble_predict(labels_df, CFG, n_tta=2)
+result_df = ensemble_predict(labels_df, CFG, n_tta=4)   # 4 TTA passes: orig, h-flip, ±5° rot
 print_summary(result_df)
 save_submission(result_df, CFG)

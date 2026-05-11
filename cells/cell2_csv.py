@@ -132,7 +132,7 @@ def parse_montgomery(cfg: "Config") -> pd.DataFrame:
                 if l_arr is not None and r_arr is not None:
                     if l_arr.shape != r_arr.shape:
                         r_arr = cv2.resize(r_arr, (l_arr.shape[1], l_arr.shape[0]))
-                    merged = np.clip(l_arr.astype(np.uint16) + r_arr, 0, 255).astype(np.uint8)
+                    merged = (np.logical_or(l_arr > 0, r_arr > 0).astype(np.uint8) * 255)
                     cv2.imwrite(str(merged_path), merged)
             if merged_path.exists():
                 mask_p = str(merged_path)

@@ -3,7 +3,7 @@
 import os, json, math, random, warnings
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 import cv2
 import numpy as np
@@ -38,6 +38,7 @@ def seed_everything(s=SEED):
     random.seed(s); np.random.seed(s)
     torch.manual_seed(s); torch.cuda.manual_seed_all(s)
     torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark     = False  # required for full reproducibility
 seed_everything()
 
 @dataclass
