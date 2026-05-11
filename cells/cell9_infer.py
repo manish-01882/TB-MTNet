@@ -44,7 +44,9 @@ def load_fold_model(fold: int, cfg: "Config") -> nn.Module:
     ckpt_path = cfg.CKPT_DIR / f"fold{fold}_best.pt"
     _model = TBMTNet(cfg).to(cfg.DEVICE)
     ckpt   = torch.load(ckpt_path, map_location=cfg.DEVICE, weights_only=False)
-    _model.load_state_dict(ckpt["model"])
+    state_dict = ckpt["model"]
+    state_dict = {k.replace("module.", "") if k.startswith("module.") else k: v for k, v in state_dict.items()}
+    _model.load_state_dict(state_dict)
     _model.eval()
     return _model
 
@@ -90,13 +92,20 @@ def ensemble_predict(df: pd.DataFrame, cfg: "Config",
         raise RuntimeError("No fold checkpoints found.")
 
     # Mean ensemble
-    ens_probs = np.stack(fold_probs, axis=0).mean(axis=0)
-    ens_sevs  = np.stack(fold_sevs,  axis=0).mean(axis=0)
+    ens_probs_raw = np.stack(fold_probs, axis=0).mean(axis=0)
+    ens_sevs_raw  = np.stack(fold_sevs,  axis=0).mean(axis=0)
+
+    # 1. Recalibrate probabilities to undo POS_WEIGHT inflation
+    # Math: p = q / (w * (1 - q) + q)
+    w = cfg.POS_WEIGHT
+    ens_probs_calibrated = ens_probs_raw / (w * (1 - ens_probs_raw) + ens_probs_raw)
 
     result_df = df[["image_path", "patient_id", "tb_label"]].copy()
-    result_df["tb_prob"]      = ens_probs
-    result_df["tb_pred"]      = (ens_probs >= 0.5).astype(int)
-    result_df["timika_score"] = ens_sevs.clip(0, 140)
+    result_df["tb_prob"]      = ens_probs_calibrated
+    result_df["tb_pred"]      = (ens_probs_calibrated >= 0.5).astype(int)
+    
+    # 2. Fix Timika Score (Model wasn't trained on normal lungs, so force to 0 if Normal)
+    result_df["timika_score"] = ens_sevs_raw.clip(0, 140) * result_df["tb_pred"]
     return result_df
 
 

@@ -53,7 +53,7 @@ def _load_via_annotations(json_path: Path) -> dict:
 
 
 def _alp_from_via_regions(regions: list, lung_mask, orig_shape: tuple) -> tuple:
-    """Compute ALP and cavity flag from VIA region list for one image.
+    """Compute ALP, cavity flag, and bbox-based ALP from VIA regions.
 
     Args:
         regions:    list of VIA region dicts (each with shape_attributes & region_attributes)
@@ -63,10 +63,16 @@ def _alp_from_via_regions(regions: list, lung_mask, orig_shape: tuple) -> tuple:
                     lung_mask dimensions. Must NOT be the polygon bounding box.
 
     Returns:
-        (alp_percent, has_cavity): ALP in [0, 100] or -1 on error; cavity bool
+        (alp_percent, has_cavity, bbox_alp_percent):
+            alp_percent   – polygon ALP in [0, 100] or -1 on error
+            has_cavity     – bool
+            bbox_alp_percent – ALP computed from bounding rectangles of the
+                              polygons, used to calibrate Tier-2 bbox scores.
+                              -1 on error.
     """
     h, w = lung_mask.shape[:2]
     lesion_mask = np.zeros((h, w), dtype=np.uint8)
+    bbox_mask   = np.zeros((h, w), dtype=np.uint8)   # synthetic bbox mask
     has_cavity = False
 
     # Fix: use real original image dimensions for scaling instead of the
@@ -106,6 +112,9 @@ def _alp_from_via_regions(regions: list, lung_mask, orig_shape: tuple) -> tuple:
             # Only draw lesion polygons (skip non-lesion labels like calcified nodules)
             if label in LESION_LABELS or label == "":
                 cv2.fillPoly(lesion_mask, [pts], 255)
+                # Also fill the bounding rectangle of this polygon into bbox_mask
+                bx, by, bw, bh = cv2.boundingRect(pts)
+                bbox_mask[by:by + bh, bx:bx + bw] = 255
 
             if label in CAVITY_LABELS:
                 has_cavity = True
@@ -118,11 +127,15 @@ def _alp_from_via_regions(regions: list, lung_mask, orig_shape: tuple) -> tuple:
 
     lung_area = (lung_mask > 127).sum()
     if lung_area == 0:
-        return -1.0, False
+        return -1.0, False, -1.0
 
     lesion_in_lung = ((lesion_mask > 0) & (lung_mask > 127)).sum()
     alp = float(lesion_in_lung) / float(lung_area) * 100.0
-    return min(alp, 100.0), has_cavity
+
+    bbox_in_lung = ((bbox_mask > 0) & (lung_mask > 127)).sum()
+    bbox_alp = float(bbox_in_lung) / float(lung_area) * 100.0
+
+    return min(alp, 100.0), has_cavity, min(bbox_alp, 100.0)
 
 
 def compute_tier1(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
@@ -186,13 +199,16 @@ def compute_tier1(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
         orig_img = cv2.imread(str(row["image_path"]), cv2.IMREAD_GRAYSCALE)
         orig_shape = orig_img.shape[:2] if orig_img is not None else lung_mask.shape[:2]
 
-        alp, cavity = _alp_from_via_regions(regions, lung_mask, orig_shape=orig_shape)
+        alp, cavity, bbox_alp = _alp_from_via_regions(regions, lung_mask, orig_shape=orig_shape)
         if alp < 0:
             continue
 
         timika = min(alp + 40.0 * float(cavity), 140.0)
         df.at[idx, "severity"]     = timika
         df.at[idx, "has_severity"] = 1
+        # Store synthetic bbox ALP for Tier-2 calibration
+        if bbox_alp >= 0:
+            df.at[idx, "_raw_alp"] = bbox_alp
         updated += 1
 
     print(
@@ -241,7 +257,20 @@ def compute_tier2(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
             continue
 
     updated = 0
+
+    # ── Gather calibration pairs from Tier-1 synthetic bbox ALP ───────
+    # Tier-1 stored _raw_alp (bbox-based ALP) alongside the gold-standard
+    # Timika severity.  We use these paired values to compute the dynamic
+    # calibration slope *before* processing any TBX11K rows.
     tier1_alp, raw_alp_paired = [], []
+    if "_raw_alp" in df.columns:
+        calib_mask = (df["has_severity"] == 1) & (df["_raw_alp"].notna()) & (df["_raw_alp"] >= 0)
+        for _, row in df[calib_mask].iterrows():
+            raw_alp_paired.append(float(row["_raw_alp"]))
+            tier1_alp.append(float(row["severity"]))
+        if tier1_alp:
+            print(f"  [Tier-2] Found {len(tier1_alp)} Tier-1 calibration pairs "
+                  f"(bbox ALP vs gold-standard Timika)")
 
     for idx, row in df[df["source"] == "tbx11k"].iterrows():
         if row["tb_label"] != 1:
@@ -285,23 +314,25 @@ def compute_tier2(df: pd.DataFrame, cfg: "Config") -> pd.DataFrame:
             continue
 
         df.at[idx, "_raw_alp"] = raw_alp
-        if row["has_severity"]:
-            raw_alp_paired.append(raw_alp)
-            tier1_alp.append(row["severity"])
         updated += 1
 
     if not updated:
         print("[Tier-2] No TBX11K active-TB rows matched bboxes in data.csv — skipping")
         return df
 
-    # Linear calibration against any Tier-1 labels (if available)
-    slope = 1.5  # paper default
+    # Linear calibration against Tier-1 synthetic bbox pairs
+    slope = 1.5  # paper default fallback
     if len(tier1_alp) >= 5:
         X = np.array(raw_alp_paired).reshape(-1, 1)
         y = np.array(tier1_alp)
-        reg = LinearRegression().fit(X, y)
+        # fit_intercept=False: 0% bbox area must map to 0 severity
+        reg = LinearRegression(fit_intercept=False).fit(X, y)
         slope = float(np.clip(reg.coef_[0], 1.0, 2.5))
-        print(f"  [Tier-2] Calibration slope = {slope:.3f}")
+        print(f"  [Tier-2] Dynamic calibration slope = {slope:.3f} "
+              f"(from {len(tier1_alp)} Tier-1 pairs)")
+    else:
+        print(f"  [Tier-2] Only {len(tier1_alp)} Tier-1 pairs found "
+              f"(need ≥5) — using default slope={slope}")
 
     for idx in df[df["source"] == "tbx11k"].index:
         raw = df.at[idx, "_raw_alp"] if "_raw_alp" in df.columns else -1

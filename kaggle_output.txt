@@ -1,22 +1,65 @@
----------------------------------------------------------------------------
-NameError                                 Traceback (most recent call last)
-/tmp/ipykernel_23/974134474.py in <cell line: 0>()
-    447 
-    448 
---> 449 fold_results = run_training(labels_df, CFG)
-
-/tmp/ipykernel_23/974134474.py in run_training(df, cfg)
-    436     results = []
-    437     for fold, (tr_idx, va_idx) in enumerate(cv.split(X, y, groups)):
---> 438         res = run_fold(fold, df, tr_idx, va_idx, cfg)
-    439         results.append(res)
-    440         print(f"\nFold {fold+1} summary: AUROC={res['best_auroc']:.4f}")
-
-/tmp/ipykernel_23/974134474.py in run_fold(fold, df, train_idx, val_idx, cfg)
-    346     sch3      = make_scheduler(opt3, cfg.S3_EPOCHS, cfg)
-    347     swa_model = AveragedModel(_model)
---> 348     swa_sch   = SWALR(opt3, swa_lr=cfg.S3_LR)
-    349 
-    350     if resume_stage == 3:
-
-NameError: name 'SWALR' is not defined
+5167.6s	13778	============================================================
+5167.6s	13779	  5-Fold CV mean AUROC = 0.9800
+5167.6s	13780	============================================================
+5500.4s	13781	
+5500.4s	13782	=======================================================
+5500.4s	13783	  OOF Classification Results
+5500.4s	13784	=======================================================
+5500.4s	13785	  AUROC          : 0.9774  (95% CI [0.9733, 0.9811])
+5500.4s	13786	  Partial AUROC  : 0.7651  (spec >= 0.70 region)
+5500.4s	13787	  Threshold (J)  : 0.0500
+5500.4s	13788	  Sensitivity    : 0.9742
+5500.4s	13789	  Specificity    : 0.9149
+5500.4s	13790	  F1             : 0.7385
+5500.4s	13791	  Confusion Mat  :
+5500.4s	13792	    TN=7460 FP=694
+5500.4s	13793	    FN=27 TP=1018
+5500.4s	13794	
+5500.4s	13795	  OOF Severity Results
+5500.4s	13796	=======================================================
+5500.4s	13797	  MAE            : 9.62  (target < 15)
+5500.4s	13798	  RMSE           : 15.12
+5500.4s	13799	  Pearson r      : 0.6010  (target > 0.75)
+5500.4s	13800	  Spearman rho   : 0.6474
+5500.4s	13801	  N severity cases: 1045
+5501.1s	13802	
+5501.1s	13803	Plot saved → /kaggle/working/oof_evaluation.png
+5501.2s	13804	Running 5-fold TTA ensemble inference …
+6677.7s	13805	  Running fold 1/2 … done
+7889.9s	13806	  Running fold 2/2 … done
+7889.9s	13807	
+7889.9s	13808	==================================================
+7889.9s	13809	  ENSEMBLE INFERENCE SUMMARY
+7889.9s	13810	==================================================
+7889.9s	13811	  Total images    : 9199
+7889.9s	13812	  Predicted TB+   : 1129  (12.3%)
+7889.9s	13813	  Predicted TB-   : 8070  (87.7%)
+7889.9s	13814	  Timika (TB+)    : mean=13.8  median=12.0  range=[5.2, 52.8]
+7889.9s	13815	
+7889.9s	13816	  Top-5 most uncertain cases (prob closest to 0.5):
+7889.9s	13817	                                                                                             image_path   tb_prob  timika_score
+7889.9s	13818	35      /kaggle/input/datasets/raddar/tuberculosis-chest-xrays-shenzhen/images/images/CHNCXR_0036_0.png  0.499679      0.000000
+7889.9s	13819	7642             /kaggle/input/datasets/vbookshelf/tbx11k-simplified/tbx11k-simplified/images/s0204.png  0.499679      0.000000
+7889.9s	13820	723   /kaggle/input/datasets/raddar/tuberculosis-chest-xrays-montgomery/images/images/MCUCXR_0082_0.png  0.498691      0.000000
+7889.9s	13821	766   /kaggle/input/datasets/raddar/tuberculosis-chest-xrays-montgomery/images/images/MCUCXR_0243_1.png  0.498691      0.000000
+7889.9s	13822	50      /kaggle/input/datasets/raddar/tuberculosis-chest-xrays-shenzhen/images/images/CHNCXR_0051_0.png  0.501665      5.402344
+7889.9s	13823	submission.csv saved → /kaggle/working/submission.csv
+7889.9s	13824	        image_id   tb_prob  timika_score
+7889.9s	13825	0  CHNCXR_0001_0  0.191511      0.000000
+7889.9s	13826	1  CHNCXR_0002_0  0.411776      0.000000
+7889.9s	13827	2  CHNCXR_0003_0  0.427709      0.000000
+7889.9s	13828	3  CHNCXR_0004_0  0.437425      0.000000
+7889.9s	13829	4  CHNCXR_0005_0  0.563398      5.761719
+7889.9s	13830	5  CHNCXR_0006_0  0.296553      0.000000
+7889.9s	13831	6  CHNCXR_0007_0  0.463081      0.000000
+7889.9s	13832	7  CHNCXR_0008_0  0.135435      0.000000
+7889.9s	13833	8  CHNCXR_0009_0  0.845550     13.890625
+7889.9s	13834	9  CHNCXR_0010_0  0.272585      0.000000
+7900.5s	13835	/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\|'
+7900.5s	13836	  cells[i][c] = re.sub('\\\\\|', '|', cell)
+7900.8s	13837	/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\_'
+7900.8s	13838	  text = re.sub(r'_', '\_', text) # Escape underscores in display text
+7902.5s	13839	[NbConvertApp] Converting notebook __notebook__.ipynb to notebook
+7902.9s	13840	[NbConvertApp] Writing 1565964 bytes to __notebook__.ipynb
+7905.3s	13841	[NbConvertApp] Converting notebook __notebook__.ipynb to html
+7906.9s	13842	[NbConvertApp] Writing 2008919 bytes to __results__.htm

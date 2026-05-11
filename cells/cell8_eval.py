@@ -27,7 +27,9 @@ def predict_fold(fold: int, df: pd.DataFrame, val_idx, cfg: "Config"):
 
     _model = TBMTNet(cfg).to(cfg.DEVICE)
     ckpt   = torch.load(ckpt_path, map_location=cfg.DEVICE, weights_only=False)
-    _model.load_state_dict(ckpt["model"])
+    state_dict = ckpt["model"]
+    state_dict = {k.replace("module.", "") if k.startswith("module.") else k: v for k, v in state_dict.items()}
+    _model.load_state_dict(state_dict)
     _model.eval()
 
     ds     = TBXDataset(df.iloc[val_idx], cfg, train=False)
