@@ -81,7 +81,7 @@ class Config:
     # S2: full multi-task        – 15 eps to push severity Pearson r → 0.75+
     # S3: fine-tune + SWA        – 10 eps; SWA kicks in last 3 eps for stability
     S1_EPOCHS: int=10; S1_LR: float=4e-4
-    S2_EPOCHS: int=15; S2_LR: float=4e-4; S2_REG_LR: float=4e-5
+    S2_EPOCHS: int=15; S2_LR: float=4e-4; S2_REG_LR: float=4e-4
     S3_EPOCHS: int=10; S3_LR: float=1.4e-5; SWA_START: int=3
     WARMUP_EPOCHS: int=2; CYCLE_DECAY: float=0.5; ETA_MIN: float=1e-6
     DEVICE: str = "cuda" if torch.cuda.is_available() else "cpu"

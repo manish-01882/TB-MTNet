@@ -110,17 +110,33 @@ class TBMTNet(nn.Module):
         return torch.sigmoid(logit), sev * 140.0
 
 
+# ── Pearson Correlation Loss ──────────────────────────────────────────
+def pearson_loss(pred: torch.Tensor, target: torch.Tensor,
+                mask: torch.Tensor) -> torch.Tensor:
+    """1 − Pearson r, computed only over masked (TB-positive) samples.
+    Directly optimises the ranking metric the evaluation cares about."""
+    pred_m   = pred[mask.bool()]
+    target_m = target[mask.bool()]
+    if len(pred_m) < 2:
+        return torch.tensor(0.0, device=pred.device)
+    vx  = pred_m   - pred_m.mean()
+    vy  = target_m - target_m.mean()
+    corr = (vx * vy).sum() / (
+        (vx.norm() * vy.norm()).clamp(min=1e-8))
+    return 1.0 - corr
+
+
 # ── Multi-Task Loss (Kendall–Gal–Cipolla uncertainty weighting) ───────
 class MultiTaskLoss(nn.Module):
     """
-    L = exp(-s_c) * L_BCE + exp(-s_r) * L_Huber + s_c + s_r
+    L = exp(-s_c) * L_BCE + exp(-s_r) * (L_Huber + 0.5·L_Pearson) + s_c + s_r
     s_c, s_r are learnable log-variance parameters.
     Regression loss is masked to TB-positive cases only.
     """
     def __init__(self, pos_weight: float, huber_beta: float):
         super().__init__()
-        self.s_c = nn.Parameter(torch.zeros(()))   # log-var for cls
-        self.s_r = nn.Parameter(torch.zeros(()))   # log-var for reg
+        self.s_c = nn.Parameter(torch.zeros(()))          # log-var for cls
+        self.s_r = nn.Parameter(torch.tensor(-1.0))       # start high to prioritise severity
         pw = torch.tensor([pos_weight])
         self.bce   = nn.BCEWithLogitsLoss(pos_weight=pw)
         self.huber = nn.SmoothL1Loss(beta=huber_beta, reduction="none")
@@ -136,9 +152,12 @@ class MultiTaskLoss(nn.Module):
 
         l_cls = self.bce(logit, y_cls)
 
+        # Regression: Huber (absolute distance) + Pearson (ranking)
         huber_elem = self.huber(sev_pred, y_sev)        # (B, 1)
-        n_valid = sev_mask.sum().clamp(min=1.0)
-        l_reg  = (huber_elem * sev_mask).sum() / n_valid
+        n_valid    = sev_mask.sum().clamp(min=1.0)
+        l_huber    = (huber_elem * sev_mask).sum() / n_valid
+        l_pearson  = pearson_loss(sev_pred, y_sev, sev_mask)
+        l_reg      = l_huber + 0.5 * l_pearson
 
         loss = (torch.exp(-self.s_c) * l_cls + self.s_c +
                 torch.exp(-self.s_r) * l_reg  + self.s_r)
