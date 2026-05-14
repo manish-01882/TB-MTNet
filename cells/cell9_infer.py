@@ -1,5 +1,6 @@
 """Cell 9 – TTA + 5-Fold Ensemble Inference → submission.csv"""
 
+import json
 import torchvision.transforms.functional as TF   # for rotation TTA
 
 # ── Four deterministic TTA augmentations ─────────────────────────────
@@ -40,8 +41,15 @@ def predict_tta(model: nn.Module, imgs: torch.Tensor,
     return prob_sum / len(augs), sev_sum / len(augs)
 
 
+def _resolve_fold_ckpt(fold: int, cfg: "Config") -> Path:
+    tier1_ckpt = cfg.CKPT_DIR / f"fold{fold}_tier1_reg.pt"
+    if tier1_ckpt.exists():
+        return tier1_ckpt
+    return cfg.CKPT_DIR / f"fold{fold}_best.pt"
+
+
 def load_fold_model(fold: int, cfg: "Config") -> nn.Module:
-    ckpt_path = cfg.CKPT_DIR / f"fold{fold}_best.pt"
+    ckpt_path = _resolve_fold_ckpt(fold, cfg)
     _model = TBMTNet(cfg).to(cfg.DEVICE)
     ckpt   = torch.load(ckpt_path, map_location=cfg.DEVICE, weights_only=False)
     state_dict = ckpt["model"]
@@ -49,6 +57,14 @@ def load_fold_model(fold: int, cfg: "Config") -> nn.Module:
     _model.load_state_dict(state_dict)
     _model.eval()
     return _model
+
+
+def load_tier1_calibration(cfg: "Config") -> dict | None:
+    path = cfg.CKPT_DIR / "tier1_calibration.json"
+    if not path.exists():
+        return None
+    with open(path, "r") as f:
+        return json.load(f)
 
 
 def ensemble_predict(df: pd.DataFrame, cfg: "Config",
@@ -65,7 +81,7 @@ def ensemble_predict(df: pd.DataFrame, cfg: "Config",
     fold_sevs  = []
 
     for fold in range(cfg.N_FOLDS):
-        ckpt = cfg.CKPT_DIR / f"fold{fold}_best.pt"
+        ckpt = _resolve_fold_ckpt(fold, cfg)
         if not ckpt.exists():
             print(f"  [WARN] Fold {fold} checkpoint not found — skipping")
             continue
@@ -95,7 +111,14 @@ def ensemble_predict(df: pd.DataFrame, cfg: "Config",
     ens_probs_raw = np.stack(fold_probs, axis=0).mean(axis=0)
     ens_sevs_raw  = np.stack(fold_sevs,  axis=0).mean(axis=0)
 
-    # 1. Recalibrate probabilities to undo POS_WEIGHT inflation
+    # 1. Calibrate Timika if Tier-1 calibration is available
+    calib = load_tier1_calibration(cfg)
+    if calib is not None:
+        slope = float(calib.get("slope", 1.0))
+        intercept = float(calib.get("intercept", 0.0))
+        ens_sevs_raw = ens_sevs_raw * slope + intercept
+
+    # 2. Recalibrate probabilities to undo POS_WEIGHT inflation
     # Math: p = q / (w * (1 - q) + q)
     w = cfg.POS_WEIGHT
     ens_probs_calibrated = ens_probs_raw / (w * (1 - ens_probs_raw) + ens_probs_raw)
@@ -104,7 +127,7 @@ def ensemble_predict(df: pd.DataFrame, cfg: "Config",
     result_df["tb_prob"]      = ens_probs_calibrated
     result_df["tb_pred"]      = (ens_probs_calibrated >= 0.5).astype(int)
     
-    # 2. Fix Timika Score (Model wasn't trained on normal lungs, so force to 0 if Normal)
+    # 3. Fix Timika Score (Model wasn't trained on normal lungs, so force to 0 if Normal)
     result_df["timika_score"] = ens_sevs_raw.clip(0, 140) * result_df["tb_pred"]
     return result_df
 

@@ -60,10 +60,20 @@ cell_files = [
     ("cells/cell7_train.py",    "cell-7-train",    "## Cell 7 — 3-Stage Training (5-Fold CV)"),
     ("cells/cell8_eval.py",     "cell-8-eval",     "## Cell 8 — OOF Evaluation + Plots"),
     ("cells/cell9_infer.py",    "cell-9-infer",    "## Cell 9 — TTA + Ensemble Inference"),
+    ("cells/cell10_tier1_finetune_calibrate.py", "cell-10-calib", "## Cell 10 — Tier-1 Fine-tune & Calibration"),
 ]
 
 for fname, cell_id, header in cell_files:
-    src = (ROOT / fname).read_text()
+    src_lines = (ROOT / fname).read_text().splitlines()
+    # Strip internal 'cells' imports as they are redundant in a single-file notebook
+    processed_lines = []
+    for line in src_lines:
+        if line.strip().startswith("from cells.") or line.strip().startswith("import cells."):
+            processed_lines.append(f"# {line}  # Stripped for Kaggle")
+        else:
+            processed_lines.append(line)
+    
+    src = "\n".join(processed_lines)
     cells.append(md_cell(header, f"md-{cell_id}"))
     cells.append(code_cell(src, cell_id))
 

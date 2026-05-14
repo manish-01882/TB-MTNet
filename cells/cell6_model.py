@@ -1,5 +1,12 @@
 """Cell 6 – TB-MTNet architecture + MultiTaskLoss (Kendall–Gal–Cipolla)."""
 
+import torch
+import torch.nn as nn
+from typing import Tuple
+import timm
+
+from cells.cell1_setup import CFG
+
 # ── ECA Channel Attention ─────────────────────────────────────────────
 class ECA(nn.Module):
     """Efficient Channel Attention (Wang et al., CVPR 2020). ~5 params."""
@@ -174,20 +181,21 @@ def count_parameters(model: nn.Module) -> int:
 
 
 # ── Instantiate & sanity-check ────────────────────────────────────────
-model    = TBMTNet(CFG).to(CFG.DEVICE)
-mtl_loss = MultiTaskLoss(CFG.POS_WEIGHT, CFG.HUBER_BETA).to(CFG.DEVICE)
+if __name__ == "__main__":
+    model    = TBMTNet(CFG).to(CFG.DEVICE)
+    mtl_loss = MultiTaskLoss(CFG.POS_WEIGHT, CFG.HUBER_BETA).to(CFG.DEVICE)
 
-if torch.cuda.device_count() > 1:
-    model = nn.DataParallel(model)
-    print(f"Using DataParallel across {torch.cuda.device_count()} GPUs")
+    if torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+        print(f"Using DataParallel across {torch.cuda.device_count()} GPUs")
 
-count_parameters(model)
+    count_parameters(model)
 
-# Forward-pass smoke test
-_x = torch.randn(2, 3, CFG.IMAGE_SIZE, CFG.IMAGE_SIZE).to(CFG.DEVICE)
-with torch.no_grad():
-    _core = model.module if hasattr(model, "module") else model
-    _logit, _sev = _core(_x)
-print(f"Logit shape : {_logit.shape}  |  Sev shape : {_sev.shape}")
-assert _logit.shape == (2, 1) and _sev.shape == (2, 1), "Shape mismatch!"
-print("Architecture OK ✓")
+    # Forward-pass smoke test
+    _x = torch.randn(2, 3, CFG.IMAGE_SIZE, CFG.IMAGE_SIZE).to(CFG.DEVICE)
+    with torch.no_grad():
+        _core = model.module if hasattr(model, "module") else model
+        _logit, _sev = _core(_x)
+    print(f"Logit shape : {_logit.shape}  |  Sev shape : {_sev.shape}")
+    assert _logit.shape == (2, 1) and _sev.shape == (2, 1), "Shape mismatch!"
+    print("Architecture OK ✓")

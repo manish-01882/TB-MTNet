@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TB-MTNet | Grad-CAM Detection</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <div class="container">
+        <header>
+            <h1>TB-MTNet Visualizer</h1>
+            <p>Upload a chest X-ray to predict Tuberculosis probability and severity, and visualize the model's focus via Grad-CAM.</p>
+        </header>
+
+        <main>
+            <div class="upload-section" id="drop-zone">
+                <input type="file" id="file-input" accept="image/*" hidden>
+                <div class="upload-content">
+                    <svg class="upload-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                    </svg>
+                    <h3>Drag & Drop X-ray Image</h3>
+                    <p>or <span class="highlight">browse files</span></p>
+                </div>
+            </div>
+
+            <div class="loading-state hidden" id="loading">
+                <div class="spinner"></div>
+                <p>Running Inference & Generating Grad-CAM...</p>
+            </div>
+
+            <div class="results-section hidden" id="results">
+                <div class="metrics">
+                    <div class="metric-card">
+                        <h4>TB Probability</h4>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar tb-bar" id="tb-prob-bar"></div>
+                        </div>
+                        <h2 id="tb-prob-val">0%</h2>
+                        <span class="badge" id="tb-badge">Negative</span>
+                    </div>
+                    <div class="metric-card">
+                        <h4>Timika Severity</h4>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar sev-bar" id="sev-bar"></div>
+                        </div>
+                        <h2 id="sev-val">0 / 140</h2>
+                        <span class="badge" id="sev-badge">Mild</span>
+                    </div>
+                </div>
+
+                <div class="images-container">
+                    <div class="image-box">
+                        <h4>Original X-Ray</h4>
+                        <img id="orig-img" src="" alt="Original Image">
+                    </div>
+                    <div class="image-box">
+                        <h4>Grad-CAM Heatmap</h4>
+                        <img id="heatmap-img" src="" alt="Heatmap Image">
+                    </div>
+                </div>
+                
+                <button class="reset-btn" id="reset-btn">Analyze Another X-ray</button>
+            </div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

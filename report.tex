@@ -192,7 +192,7 @@ We are also thankful to the other faculty members and our friends who gave us fe
 
 \section{Project Overview}
 
-Tuberculosis, commonly known as TB, is caused by the bacterium \textit{Mycobacterium tuberculosis} and spreads through the air. The World Health Organization (WHO) reports that TB is still the second deadliest infectious disease on the planet --- around 10.6 million people got sick with it in 2022, and roughly 1.3 million died. The burden falls hardest on low- and middle-income nations, where there simply are not enough trained radiologists to read the volume of chest X-rays being produced.
+Tuberculosis, commonly known as TB, is caused by the bacterium \textit{Mycobacterium tuberculosis} and spreads through the air. The World Health Organization (WHO) reports that TB is still the second deadliest infectious disease on the planet --- around 10.6 million people got sick with it in 2022, and roughly 1.3 million died~\cite{ref10}. The burden falls hardest on low- and middle-income nations, where there simply are not enough trained radiologists to read the volume of chest X-rays being produced.
 
 Chest X-rays (CXRs) are by far the most widely used tool for TB screening. But interpreting them well takes years of clinical training, and in countries where TB is most common, that expertise is scarce. This is where deep learning comes in --- automated analysis of CXRs could help close the diagnostic gap. The trouble is, most existing AI systems for TB treat it as a straightforward binary problem: they look at an X-ray and say either ``yes, TB'' or ``no, not TB.'' That is useful for first-pass screening, but it tells the clinician nothing about \textit{how severe} the disease is.
 
@@ -244,7 +244,7 @@ The main technical hurdles we faced along the way include:
 There are several real-world factors that make a tool like this genuinely needed:
 
 \begin{itemize}
-    \item \textbf{Not Enough Radiologists:} The WHO estimates a global shortfall of over 4 million health workers, and radiologists are among the hardest to find in TB-heavy regions. An AI system that pre-screens X-rays could let a single radiologist handle a much larger caseload.
+    \item \textbf{Not Enough Radiologists:} The WHO estimates a global shortfall of over 4 million health workers~\cite{ref10}, and radiologists are among the hardest to find in TB-heavy regions. An AI system that pre-screens X-rays could let a single radiologist handle a much larger caseload.
 
     \item \textbf{Current AI Tools Fall Short:} Tools like CAD4TB and qXR are already being used in some clinical settings, but they only give a probability of TB being present. They do not produce a severity metric like the Timika score, which limits how useful they are for treatment planning.
 
@@ -366,14 +366,14 @@ The rest of this report is laid out as follows:
 Before diving into our own approach, it is worth surveying the relevant literature and existing tools that informed our design decisions.
 
 \subsection{Deep Learning for Medical Image Analysis}
-Since the breakthrough results of Krizhevsky et al. (2012) on ImageNet, CNNs have become the dominant approach for medical image classification. For chest X-ray analysis in particular, architectures like DenseNet-121~\cite{ref6}, ResNet-50, and EfficientNet~\cite{ref7} have been shown to perform at or near radiologist level on tasks such as pneumonia detection, cardiomegaly assessment, and pleural effusion identification. A big part of why these models work so well is transfer learning: by starting from weights pre-trained on ImageNet (roughly 1.2 million natural images), the model already knows how to detect edges, textures, and shapes. These low-level features transfer surprisingly well to medical images even though the domain is quite different.
+Since the breakthrough results of Krizhevsky et al.~\cite{ref16} (2012) on ImageNet, CNNs have become the dominant approach for medical image classification. For chest X-ray analysis in particular, architectures like DenseNet-121~\cite{ref6}, ResNet-50~\cite{ref19}, and EfficientNet~\cite{ref7} have been shown to perform at or near radiologist level on tasks such as pneumonia detection, cardiomegaly assessment, and pleural effusion identification. A big part of why these models work so well is transfer learning: by starting from weights pre-trained on ImageNet (roughly 1.2 million natural images), the model already knows how to detect edges, textures, and shapes. These low-level features transfer surprisingly well to medical images even though the domain is quite different.
 
 More recently, Vision Transformers (ViT)~\cite{ref8} have emerged as a serious alternative. They apply self-attention directly to image patches, which allows them to capture long-range spatial dependencies that CNNs can miss. The catch is that ViTs are data-hungry --- they lack the built-in biases (locality, translation equivariance) that make CNNs sample-efficient, so they typically need much more training data. Hybrid architectures that pair a CNN backbone with a Transformer encoder offer a middle ground: the CNN handles local feature extraction efficiently, while the Transformer adds global reasoning on top.
 
 \subsection{TB Detection with Deep Learning}
-There has been quite a bit of work on automated TB detection from CXRs. Lakhani and Sundaram (2017) showed that fine-tuned AlexNet and GoogLeNet models could achieve AUROC values above 0.95 on the Shenzhen and Montgomery datasets. Those numbers were impressive, but the datasets are small and fairly homogeneous, so it was unclear how well the models would generalise to more diverse patient populations.
+There has been quite a bit of work on automated TB detection from CXRs. Lakhani and Sundaram~\cite{ref9} (2017) showed that fine-tuned AlexNet and GoogLeNet models could achieve AUROC values above 0.95 on the Shenzhen and Montgomery datasets. Those numbers were impressive, but the datasets are small and fairly homogeneous, so it was unclear how well the models would generalise to more diverse patient populations.
 
-The TBX11K dataset~\cite{ref1} was a step forward in that regard --- it introduced 11,200 CXR images with bounding box annotations for TB lesions, making it the largest publicly available TB dataset to date. Liu et al. (2020) used it to train object detection models (Faster R-CNN, RetinaNet) that could localise TB lesions, but they did not attempt severity quantification. The dataset's bounding boxes are helpful for localisation, but they are rough approximations of actual lesion boundaries.
+The TBX11K dataset~\cite{ref1} was a step forward in that regard --- it introduced 11,200 CXR images with bounding box annotations for TB lesions, making it the largest publicly available TB dataset to date. Liu et al. (2020) used it to train object detection models (Faster R-CNN~\cite{ref17}, RetinaNet~\cite{ref18}) that could localise TB lesions, but they did not attempt severity quantification. The dataset's bounding boxes are helpful for localisation, but they are rough approximations of actual lesion boundaries.
 
 On the commercial side, tools like CAD4TB (Delft Imaging) and qXR (Qure.ai) have been deployed in real clinical settings across Africa and Asia. CAD4TB has been through over 20 prospective validation studies and consistently hits sensitivity above 90\% at the WHO-recommended specificity thresholds. But these tools still only output a probability score --- they do not tell you how severe the disease is.
 
@@ -383,7 +383,7 @@ The Timika score~\cite{ref2} was originally developed as a way to quantify radio
 Despite being clearly useful, very few research groups have tried to predict the Timika score automatically. The main blocker is the data: you need pixel-level lesion annotations to compute ALP (affected lung percentage), and those annotations are rarely available in public datasets. Most TB datasets only provide image-level binary labels, which makes direct supervised regression impossible without some creative workarounds.
 
 \subsection{Weakly Supervised Learning and Pseudo-Labeling}
-When you do not have fine-grained annotations, weakly supervised learning can help bridge the gap. Techniques like Class Activation Mapping (CAM) and its variants --- Grad-CAM, Grad-CAM++ --- generate spatial heatmaps from classification models, highlighting the regions that matter most for the predicted class. These heatmaps have been used as pseudo-labels for segmentation tasks in medical imaging, particularly in situations where getting a radiologist to annotate every pixel is impractical.
+When you do not have fine-grained annotations, weakly supervised learning can help bridge the gap. Techniques like Class Activation Mapping (CAM) and its variants --- Grad-CAM~\cite{ref12}, Grad-CAM++~\cite{ref13} --- generate spatial heatmaps from classification models, highlighting the regions that matter most for the predicted class. These heatmaps have been used as pseudo-labels for segmentation tasks in medical imaging, particularly in situations where getting a radiologist to annotate every pixel is impractical.
 
 In our project, we use Grad-CAM++ pseudo-labels for exactly this purpose: for TB-positive images that have no spatial annotations at all, we use the heatmaps from a teacher model as approximate lesion maps to compute rough Timika scores.
 
@@ -625,10 +625,10 @@ TBX11K & 11,200 & 1,200 & 10,000 & COCO bounding boxes \\
 \end{table}
 
 \subsection{Shenzhen Hospital Dataset}
-This dataset comes from Shenzhen No. 3 People's Hospital in China and contains 662 posterior-anterior (PA) chest X-ray images --- 336 showing TB and 326 normal. What makes it especially valuable is that it comes with radiologist-created lung masks and, for the TB-positive cases, polygon annotations in VIA (VGG Image Annotator) JSON format that trace out individual lesion regions. The lesion categories cover things like cavities, infiltrates of different severities, nodules, linear densities, and pleural thickening. This is the only dataset in our collection that has pixel-level lesion annotations, so it serves as the gold standard for computing Timika scores.
+This dataset comes from Shenzhen No. 3 People's Hospital in China and contains 662 posterior-anterior (PA) chest X-ray images --- 336 showing TB and 326 normal. What makes it especially valuable is that it comes with radiologist-created lung masks and, for the TB-positive cases, polygon annotations in VIA (VGG Image Annotator) JSON format that trace out individual lesion regions. The lesion categories cover things like cavities, infiltrates of different severities, nodules, linear densities, and pleural thickening. This is the only dataset in our collection that has pixel-level lesion annotations, so it serves as the gold standard for computing Timika scores~\cite{ref11}.
 
 \subsection{Montgomery County Dataset}
-Published by the U.S. National Library of Medicine, this is a smaller dataset of 138 PA chest X-rays (58 TB-positive, 80 normal) collected from a TB screening programme in Montgomery County, Maryland. It comes with ground-truth left and right lung masks, but there are no lesion annotations. The images are high quality and well standardised, which made them useful mainly for training our lung segmentation model alongside the Shenzhen masks.
+Published by the U.S. National Library of Medicine, this is a smaller dataset of 138 PA chest X-rays (58 TB-positive, 80 normal) collected from a TB screening programme in Montgomery County, Maryland. It comes with ground-truth left and right lung masks, but there are no lesion annotations. The images are high quality and well standardised, which made them useful mainly for training our lung segmentation model alongside the Shenzhen masks~\cite{ref11}.
 
 \subsection{TBX11K Dataset}
 TBX11K~\cite{ref1} is the largest public TB X-ray dataset currently available. Introduced at CVPR 2020 by Liu et al., it has 11,200 images with COCO-format bounding box annotations for active TB, latent TB, non-TB abnormalities, and healthy cases. For our project, we only used the active-TB images ($\sim$1,200) and the healthy ones ($\sim$10,000). The bounding boxes give us a rough idea of where the lesions are, but they inevitably overestimate the actual lesion area since a rectangle always includes some healthy tissue along with the lesion. We had to account for this when computing severity scores.
@@ -858,7 +858,7 @@ Bounding boxes always overestimate lesion area because the rectangle inevitably 
 \textbf{How we compute the score:}
 \begin{enumerate}
     \item Train a lightweight \textbf{DenseNet-121 teacher} on all data \textit{excluding} Tier-3 candidate images to prevent circular pseudo-label contamination.
-    \item For each Tier-3 image, run \textbf{Grad-CAM++} targeting the last dense block of the DenseNet-121 teacher to obtain a class activation map.
+    \item For each Tier-3 image, run \textbf{Grad-CAM++}~\cite{ref13} targeting the last dense block of the DenseNet-121 teacher to obtain a class activation map.
     \item Upsample the activation map to 512$\times$512 and normalize to $[0,1]$.
     \item Threshold at the 40th percentile of activation values \textit{within the lung mask} to produce a binary pseudo-lesion mask.
     \item Apply morphological closing (5$\times$5 kernel) followed by opening (3$\times$3 kernel) to remove noise.
@@ -886,7 +886,7 @@ The spatial feature map $(B, 96, 14, 14)$ gets flattened into a sequence of 196 
 \begin{equation}
 Z_0 = [z_{CLS};\ \text{flatten}(F_2)] + E_{pos}, \quad Z_0 \in \mathbb{R}^{197 \times 96}
 \end{equation}
-This goes through a standard 4-layer Transformer encoder with pre-LayerNorm, 4 attention heads, an FFN dimension of 384, and GELU activation. The $[\text{CLS}]$ token's output $z_{CLS} \in \mathbb{R}^{96}$ acts as the aggregated representation for the entire image.
+This goes through a standard 4-layer Transformer encoder~\cite{ref15} with pre-LayerNorm, 4 attention heads, an FFN dimension of 384, and GELU activation. The $[\text{CLS}]$ token's output $z_{CLS} \in \mathbb{R}^{96}$ acts as the aggregated representation for the entire image.
 
 \subsection{Dual Output Heads}
 Two simple linear layers map the $[\text{CLS}]$ embedding to the final predictions:
@@ -1010,7 +1010,7 @@ We split the data using \texttt{StratifiedGroupKFold} with patient IDs as groups
 \end{itemize}
 
 \subsection{Stochastic Weight Averaging (SWA)}
-During the last 3 epochs of Stage 3, we turn on SWA, which averages the model weights over those training steps. After training finishes, we do a single forward pass over the training data to update the batch normalisation running statistics in the averaged model. If the SWA checkpoint scores higher on validation AUROC than the best single-epoch checkpoint, we keep the SWA version.
+During the last 3 epochs of Stage 3, we turn on SWA~\cite{ref14}, which averages the model weights over those training steps. After training finishes, we do a single forward pass over the training data to update the batch normalisation running statistics in the averaged model. If the SWA checkpoint scores higher on validation AUROC than the best single-epoch checkpoint, we keep the SWA version.
 
 \subsection{Data Augmentation}
 We use the Albumentations library for training augmentations:
@@ -1036,7 +1036,7 @@ After recalibration, a probability of 0.5 actually means roughly equal evidence 
 For images that the model classifies as TB-negative (below the Youden's J threshold), we force the Timika severity score to zero, no matter what the regression head outputs. This is a deliberate design choice --- without it, you could end up in the absurd situation where a patient is told they do not have TB but receives a non-zero severity score, which would be confusing and clinically misleading.
 
 \subsection{Grad-CAM Heatmap Generation}
-We use Gradient-weighted Class Activation Mapping (Grad-CAM) to generate visual explanations of what the model is paying attention to. The target layer is the projection bridge --- the last convolutional layer before the Transformer:
+We use Gradient-weighted Class Activation Mapping (Grad-CAM)~\cite{ref12} to generate visual explanations of what the model is paying attention to. The target layer is the projection bridge --- the last convolutional layer before the Transformer:
 \begin{enumerate}
     \item Perform a forward pass to obtain the TB classification logit.
     \item Compute gradients of the logit with respect to the bridge layer's feature map activations via backpropagation.
@@ -1308,7 +1308,7 @@ Before this system could be used in real clinical practice, it would need to go 
 Y.~Liu, Y.~Wu, Y.~Ban, H.~Wang, and M.~Cheng, ``Rethinking Computer-Aided Tuberculosis Diagnosis,'' in \emph{Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, 2020, pp. 2646--2655.
 
 \bibitem{ref2}
-A.~P.~Ralph, G.~Kenangalem, P.~Waramori, P.~Pontororing, A.~Sandjaja, T.~Tjitra, et al., ``High morbidity during treatment and residual pulmonary disability in pulmonary tuberculosis: under-recognised phenomena,'' \emph{PLoS ONE}, vol.~5, no.~8, e13reflects, 2010.
+A.~P.~Ralph, G.~Kenangalem, P.~Waramori, P.~Pontororing, A.~Sandjaja, T.~Tjitra, et al., ``High morbidity during treatment and residual pulmonary disability in pulmonary tuberculosis: under-recognised phenomena,'' \emph{PLoS ONE}, vol.~5, no.~8, e80302, 2010.
 
 \bibitem{ref3}
 A.~Kendall, Y.~Gal, and R.~Cipolla, ``Multi-Task Learning Using Uncertainty to Weigh Losses for Scene Geometry and Semantics,'' in \emph{Proc. IEEE/CVF CVPR}, 2018, pp. 7482--7491.
@@ -1348,6 +1348,18 @@ P.~Izmailov, D.~Podoprikhin, T.~Garipov, D.~Vetrov, and A.~G.~Wilson, ``Averagin
 
 \bibitem{ref15}
 A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N.~Gomez, et al., ``Attention Is All You Need,'' in \emph{Proc. NeurIPS}, 2017, pp. 5998--6008.
+
+\bibitem{ref16}
+A.~Krizhevsky, I.~Sutskever, and G.~E.~Hinton, ``ImageNet Classification with Deep Convolutional Neural Networks,'' in \emph{Proc. NeurIPS}, 2012, pp. 1097--1105.
+
+\bibitem{ref17}
+S.~Ren, K.~He, R.~Girshick, and J.~Sun, ``Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks,'' in \emph{Proc. NeurIPS}, 2015, pp. 91--99.
+
+\bibitem{ref18}
+T.-Y.~Lin, P.~Goyal, R.~Girshick, K.~He, and P.~Doll\'{a}r, ``Focal Loss for Dense Object Detection,'' in \emph{Proc. IEEE ICCV}, 2017, pp. 2980--2988.
+
+\bibitem{ref19}
+K.~He, X.~Zhang, S.~Ren, and J.~Sun, ``Deep Residual Learning for Image Recognition,'' in \emph{Proc. IEEE/CVF CVPR}, 2016, pp. 770--778.
 
 \end{thebibliography}
 

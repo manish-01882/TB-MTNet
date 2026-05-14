@@ -50,10 +50,10 @@ class Config:
     TBX11K_DIR:        Path = Path("/kaggle/input/tbx11k-simplified")
     RAHMAN_DIR:        Path = Path("/kaggle/input/tuberculosis-tb-chest-xray-dataset")
     SHEN_ANNOT_JSON:   Path = Path("/kaggle/input/datasets/manishchoudhary9/shenzen-polygon-annotations/Annotations_AllinOne_json.json")
-    BASE:       Path = Path("/kaggle/working")
-    CKPT_DIR:   Path = Path("/kaggle/working/checkpoints")
-    LABELS_CSV: Path = Path("/kaggle/working/labels.csv")
-    LUNG_CKPT:  Path = Path("/kaggle/working/checkpoints/lung_unet.pt")
+    BASE:       Path = Path("/kaggle/working") if Path("/kaggle").exists() else Path(".")
+    CKPT_DIR:   Path = Path("/kaggle/working/checkpoints") if Path("/kaggle").exists() else Path("./checkpoints")
+    LABELS_CSV: Path = Path("/kaggle/working/labels.csv") if Path("/kaggle").exists() else Path("./labels.csv")
+    LUNG_CKPT:  Path = Path("/kaggle/working/checkpoints/lung_unet.pt") if Path("/kaggle").exists() else Path("./checkpoints/lung_unet.pt")
     IMAGE_SIZE: int   = 512
     SEG_SIZE:   int   = 256
     D_MODEL:    int   = 96
@@ -91,7 +91,10 @@ class Config:
     AMP_DTYPE: str = "bfloat16"
 
     def __post_init__(self):
-        self.CKPT_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            self.CKPT_DIR.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            pass
 
 CFG = Config()
 print(f"Device : {CFG.DEVICE} | GPUs: {CFG.NUM_GPUS} | AMP: {CFG.USE_AMP}")
